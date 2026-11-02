@@ -258,7 +258,7 @@ it('returns where a reply stands: sent, or dropped when its conversation can no 
   expect(await reply('修好了，请看 PR。')).toEqual({ status: 'dropped' })
 })
 
-it('sends the files of a ready report with that report, before the report ends the ticket and takes the worker\'s tools', async () => {
+it('sends a ready report\'s files with a note for the person, never the internal summary', async () => {
   const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
   const directory = await mkdtemp(join(tmpdir(), 'report-files-'))
   const path = join(directory, 'server-disk-memory-report.txt')
@@ -267,13 +267,25 @@ it('sends the files of a ready report with that report, before the report ends t
   await expect(h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.', files: [join(directory, 'nope.txt')] }))
     .rejects.toThrow(/No such file/)
   expect(h.runtime.store.tickets.get(ticket.id)!.ended).toBeUndefined()
-  const result = await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: '报告见附件。', files: [path] })
+  // A summary is the internal record the orchestrator reads; the long one here must not become the person's message.
+  const summary = 'Root cause verified in src/app/sessions.ts:293-296: the guard strips every tool once the ticket ended. '.repeat(10)
+  const result = await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary, files: [path], files_text: '报告见附件。' })
   expect(result).toMatchObject({ reported: true, files: ['server-disk-memory-report.txt'] })
   // The report ended the ticket, and the files went out with it rather than being left for a tool the worker no longer has.
   expect(h.runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ by: 'executor', outcome: 'completed' })
-  // Feishu's Source keeps the text only, but the queued message carries the file for a Channel that sends it.
-  const larkCalls = vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args)
-  expect(larkCalls.find(args => args[1] === '+messages-reply' && args.join(' ').includes('报告见附件。'))).toBeDefined()
+  const text = (args: string[]) => args[args.indexOf('--markdown') + 1] ?? ''
+  const replies = vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply')
+  expect(replies.map(text)).toContain('报告见附件。')
+  // Nothing the person received repeats the summary.
+  expect(replies.filter(args => text(args).includes('Root cause'))).toEqual([])
+  // Without files_text the person still gets one short line naming the file, not the summary.
+  const second = await h.acceptedTicket(feishu('2', '@bot 再来一次'))
+  const again = await h.runTool(second.sessionId, 'orchestrator_report', { state: 'ready', summary, files: [path] })
+  expect(again).toMatchObject({ reported: true, files: ['server-disk-memory-report.txt'] })
+  const last = vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply').map(text).at(-1)!
+  expect(last).toContain('server-disk-memory-report.txt')
+  expect(last.length).toBeLessThanOrEqual(200)
+  expect(last).not.toContain('Root cause')
 })
 it('checks an acknowledgement against the IM word limit, not a character count', async () => {
   const trigger = feishu('1', '@bot 修一下回归')

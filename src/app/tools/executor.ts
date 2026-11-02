@@ -22,6 +22,12 @@ export interface ExecutorToolsHost {
   sendReplies(): Promise<void>
 }
 
+/** The one-line notice a person reads when a report sends files and gives no text of its own. */
+function fileNotice(files: readonly { name: string }[]): string {
+  const names = files.map(file => `\`${file.name}\``)
+  return names.length === 1 ? `已附上文件 ${names[0]}。` : `已附上 ${names.length} 个文件：${names.join('、')}。`
+}
+
 export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
   const ticketId = ticket.id
   return [
@@ -86,6 +92,8 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         reply_to_trigger_id: z.string().optional().describe('The explicit human question this report answers; never for ordinary progress.'),
         files: z.array(z.string().min(1)).min(1).max(MAX_SENT_FILES).nullish()
           .describe('Absolute paths of files to send with a ready report, as `orchestrator_send_file` would; a ready report may end the ticket before that tool can run.'),
+        files_text: z.string().trim().min(1).max(1000).optional()
+          .describe('The short note the person reads with the files; the summary stays internal. Defaults to a one-line notice.'),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
@@ -103,7 +111,8 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           const updated = host.engine.report(ticketId, report)
           // A ready report may end the ticket, after which its worker has no tools left: queue the files here, in the same
           // atomic step, so the result they belong to always carries them.
-          const sent = files.length ? host.engine.replyWithFiles(ticketId, args.summary, files) : undefined
+          // What the person reads, never the internal summary: they get the note, or a plain one-line notice naming the files.
+          const sent = files.length ? host.engine.replyWithFiles(ticketId, args.files_text ?? fileNotice(files), files) : undefined
           const relay = reportRelay(updated, report)
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'
