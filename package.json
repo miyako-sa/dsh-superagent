@@ -56,7 +56,6 @@
   },
   "packageManager": "pnpm@11.7.0",
   "dependencies": {
-    "dsh-superagent-telegram": "file:/root/src/miyako-sa/dsh-superagent-telegram",
     "proper-lockfile": "4.1.2",
     "zod": "4.4.3"
   },
