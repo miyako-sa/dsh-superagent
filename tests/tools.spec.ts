@@ -1,4 +1,7 @@
 /** Session tool registration, role-scoped resource reads, and routing/settings tool contracts. */
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TICKET_STATES } from '../src/app/cards.ts'
 import { builtInBase, builtInParts, defaultPrompts } from '../src/app/prompts.ts'
@@ -255,6 +258,23 @@ it('returns where a reply stands: sent, or dropped when its conversation can no 
   expect(await reply('修好了，请看 PR。')).toEqual({ status: 'dropped' })
 })
 
+it('sends the files of a ready report with that report, before the report ends the ticket and takes the worker\'s tools', async () => {
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const directory = await mkdtemp(join(tmpdir(), 'report-files-'))
+  const path = join(directory, 'server-disk-memory-report.txt')
+  await writeFile(path, 'disk 172G of 915G\n')
+  // The file is checked before anything is recorded: a typo fails the call, leaving the ticket open and unsent.
+  await expect(h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.', files: [join(directory, 'nope.txt')] }))
+    .rejects.toThrow(/No such file/)
+  expect(h.runtime.store.tickets.get(ticket.id)!.ended).toBeUndefined()
+  const result = await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: '报告见附件。', files: [path] })
+  expect(result).toMatchObject({ reported: true, files: ['server-disk-memory-report.txt'] })
+  // The report ended the ticket, and the files went out with it rather than being left for a tool the worker no longer has.
+  expect(h.runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ by: 'executor', outcome: 'completed' })
+  // Feishu's Source keeps the text only, but the queued message carries the file for a Channel that sends it.
+  const larkCalls = vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args)
+  expect(larkCalls.find(args => args[1] === '+messages-reply' && args.join(' ').includes('报告见附件。'))).toBeDefined()
+})
 it('checks an acknowledgement against the IM word limit, not a character count', async () => {
   const trigger = feishu('1', '@bot 修一下回归')
   h.runtime.receive(trigger); await h.runtime.idle()

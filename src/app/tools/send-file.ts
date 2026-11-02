@@ -16,6 +16,8 @@ export interface SendFileHost {
 }
 /** The only Ticket field the tool reads. */
 export interface SendFileTicket { readonly id: string }
+/** Public spelling of the tool name, so a caller outside this module can quote it. */
+export const SEND_FILE_TOOL = 'orchestrator_send_file'
 
 const Schema = z.object({
   text: z.string().trim().min(1).describe('The message that goes first; Markdown where the Channel supports it.'),
@@ -33,18 +35,25 @@ async function checkFile(path: string): Promise<string> {
   return path
 }
 
+/** The same checks for a batch, as outbound attachments; a ready report sends its files through this too. */
+export async function checkSendFiles(paths: string[]): Promise<{ path: string; name: string }[]> {
+  const files = await Promise.all(paths.map(checkFile))
+  return files.map(path => ({ path, name: basename(path) }))
+}
+
 export function sendFileTool(host: SendFileHost, ticket: SendFileTicket): Tool {
   return tool({
-    name: 'orchestrator_send_file',
+    name: SEND_FILE_TOOL,
     description: 'Send one message and files back to the conversation the ticket started in, such as an image the work produced. '
       + 'The Channel decides whether it can carry files; a Channel that cannot keeps the text only. '
-      + 'Prefer this over describing a file the person cannot open.',
+      + 'Prefer this over describing a file the person cannot open. A ready report ends the ticket and leaves its worker no tools, '
+      + 'so pass the files of a ready result to orchestrator_report instead: it sends them with that report.',
     schema: Schema,
     execute: async args => {
-      const files = await Promise.all(args.files.map(checkFile))
-      const reply = host.engine.replyWithFiles(ticket.id, args.text, files.map(path => ({ path, name: basename(path) })))
+      const files = await checkSendFiles(args.files)
+      const reply = host.engine.replyWithFiles(ticket.id, args.text, files)
       if (reply.status !== 'sent') await host.sendReplies()
-      return { reply_id: reply.id, status: reply.status, reused: reply.reused, files: files.map(path => basename(path)) }
+      return { reply_id: reply.id, status: reply.status, reused: reply.reused, files: files.map(file => file.name) }
     },
   })
 }

@@ -1,4 +1,5 @@
 /** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, and reporting status. */
+import { basename } from 'node:path'
 import { z } from 'zod'
 import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
@@ -9,7 +10,7 @@ import type { Store } from '../store.ts'
 import { reportRelay, threadFollowedNotice } from '../notices.ts'
 import type { Sessions } from '../sessions.ts'
 import { AcknowledgementSchema, readTool, tool, type Tool } from './tool.ts'
-import { sendFileTool } from './send-file.ts'
+import { checkSendFiles, MAX_SENT_FILES, sendFileTool } from './send-file.ts'
 
 export interface ExecutorToolsHost {
   readonly engine: Pick<EngineForExecutor, 'report' | 'reply' | 'replyWithFiles' | 'markUnrelated' | 'handback' | 'followForContext'>
@@ -83,24 +84,35 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
         pr_number: z.number().int().positive().nullish().describe(`The ticket's PR: its source PR, or one by ${host.github.deployment.github.login} from a branch named after this ticket (DSH_SUPERAGENT_NAME).`),
         reply_to_trigger_id: z.string().optional().describe('The explicit human question this report answers; never for ordinary progress.'),
+        files: z.array(z.string().min(1)).min(1).max(MAX_SENT_FILES).nullish()
+          .describe('Absolute paths of files to send with a ready report, as `orchestrator_send_file` would; a ready report may end the ticket before that tool can run.'),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
+        // Check the files before anything is recorded, so a typo fails the call rather than a half-sent result.
+        const files = args.files ? await checkSendFiles(args.files) : []
         const pull = args.pr_number != null ? await readPull(host.github, args.pr_number, signal) : undefined
         // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
-        return host.store.atomic(() => {
+        const outcome = host.store.atomic(() => {
           const refused = pull && claimPull(host.github, ticketId, pull)
           if (refused) throw new Error(refused)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
             ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
           const updated = host.engine.report(ticketId, report)
+          // A ready report may end the ticket, after which its worker has no tools left: queue the files here, in the same
+          // atomic step, so the result they belong to always carries them.
+          const sent = files.length ? host.engine.replyWithFiles(ticketId, args.summary, files) : undefined
           const relay = reportRelay(updated, report)
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'
-          return { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }
+          return { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}),
+            ...(sent ? { files: files.map(file => basename(file.path)), delivery: sent.id } : {}) }
         })
+        // The queued files go out once the report and they are recorded together, never from inside the transaction.
+        if (outcome.delivery) await host.sendReplies()
+        return outcome
       },
     }),
   ]
