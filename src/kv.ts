@@ -6,7 +6,6 @@ import type { PromptVersion } from './app/prompts.ts'
 import type { SettingsVersion } from './app/store.ts'
 import type { SettingsSave } from './policy.ts'
 import type { Retry } from './sources/github.ts'
-import type { TelegramChatInfo, TelegramUser } from './sources/telegram-trigger.ts'
 
 /** Key of a KV record whose value has type `V`; a plain string represents an untyped key. */
 export type Key<V> = string & { readonly __value?: V }
@@ -56,10 +55,4 @@ export const KV = {
   feishu: { chats: record<Record<string, boolean>>('feishu-chats'), history: family<string, [chat: string]>('feishu-history:'),
     topics: family<Record<string, string>, [chat: string]>('feishu-history-threads:'),
     seen: family<string[], [thread: string]>('thread-seen:'), initialized: family<boolean, [thread: string]>('thread-initialized:') },
-  /**
-   * Telegram Source: the long-poll offset; known chats (`chat_id -> type and display name`); and the bot resolved from a
-   * token environment, remembered so its own messages are skipped.
-   */
-  telegram: { offset: record<number>('telegram-offset'), chats: record<Record<string, TelegramChatInfo>>('telegram-chats'),
-    me: record<{ tokenEnv: string; user: TelegramUser }>('telegram-me') },
 }
