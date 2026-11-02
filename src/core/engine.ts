@@ -2,7 +2,7 @@
 import { UserError } from './errors.ts'
 import { isoTime, liveTicket } from './model.ts'
 import type { ChannelRef, Decision, PolicyEffect, ThreadRef, Ticket, Trigger } from './model.ts'
-import type { Candidate, Repositories } from './ports.ts'
+import type { Candidate, OutboundAttachment, Repositories } from './ports.ts'
 import type { EngineOptions } from './part.ts'
 import { Assignments, type WorkerReport } from './assignments.ts'
 import { Evals, type Outcome } from './evals.ts'
@@ -133,6 +133,15 @@ export class Engine {
    * is not ready, completed, merged, or dropped.
    */
   reply(request: ReplyRequest): Reply { return this.repo.atomic(() => this.replies.reply(request)) }
+  /**
+   * Queue a worker's result with files: a reply of purpose `result` and the same rule as `reply`, carrying attachments the
+   * Channel's Source sends after the text. Kept beside `reply` because only an Executor session sends files, and its own
+   * files must stay on the result path rather than on an acknowledgement or an answer.
+   * @throws UserError under the same conditions as `reply`.
+   */
+  replyWithFiles(ticketId: string, text: string, attachments: OutboundAttachment[]): Reply {
+    return this.repo.atomic(() => this.replies.reply({ purpose: 'result', ticketId, text, attachments }))
+  }
 
   // People, through the panel or the main Session
 
@@ -267,4 +276,4 @@ export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reeva
 export type EngineForSettings = Pick<Engine, 'policyChanged'>
 /** What the Executor tells the Engine, and what its workers ask of it. */
 export type EngineForExecutor = Pick<Engine, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed'
-  | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply'>
+  | 'assignmentInterrupted' | 'report' | 'markUnrelated' | 'handback' | 'followForContext' | 'reply' | 'replyWithFiles'>

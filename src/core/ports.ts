@@ -68,8 +68,18 @@ export interface Executor {
   stop(ticket: Ticket, assignment: Assignment, reason: string): void
 }
 
+/**
+ * A file a message carries; `path` is an absolute path on the host the Source runs on, and a Source that cannot send files
+ * ignores it (and says so in its own health) rather than failing the message.
+ */
+export interface OutboundAttachment { path: string; name?: string }
+
 /** A message for a Channel; `ticketId` names the Ticket it is for, when there is one. */
-export interface OutboundMessage { id: string; channel: ChannelRef; text: string; kind: 'acknowledgement' | 'reply' | 'notice'; ticketId?: string }
+export interface OutboundMessage {
+  id: string; channel: ChannelRef; text: string; kind: 'acknowledgement' | 'reply' | 'notice'; ticketId?: string
+  /** Files sent with the message after its text; absent for a text-only message. */
+  attachments?: OutboundAttachment[]
+}
 /** A queued message waits (`pending`), went out (`sent`), or was dropped because its conversation can never receive it (`dropped`). */
 export type ReplyStatus = 'pending' | 'sent' | 'dropped'
 /** The messages queued for Channels; the Engine queues them inside its commands, and a sender delivers them later. */

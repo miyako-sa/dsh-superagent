@@ -17,6 +17,7 @@ import type { PromptVersion, Prompts } from './prompts.ts'
 import type { Sessions } from './sessions.ts'
 import type { Settings } from './settings.ts'
 import { KV } from '../kv.ts'
+export { sendFileTool } from './tools/send-file.ts'
 import type { Store } from './store.ts'
 import type { TextCache } from './cache.ts'
 
